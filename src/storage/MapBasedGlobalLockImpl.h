@@ -1,7 +1,7 @@
 #ifndef AFINA_STORAGE_MAP_BASED_GLOBAL_LOCK_IMPL_H
 #define AFINA_STORAGE_MAP_BASED_GLOBAL_LOCK_IMPL_H
 
-#include <map>
+#include <unordered_map>
 #include <mutex>
 #include <string>
 
@@ -15,6 +15,9 @@ namespace Backend {
  *
  *
  */
+
+typedef std::pair<size_t, std::string> pair_st_str;
+
 class MapBasedGlobalLockImpl : public Afina::Storage {
 public:
     MapBasedGlobalLockImpl(size_t max_size = 1024) : _max_size(max_size) {}
@@ -39,8 +42,11 @@ private:
     std::mutex _lock;
 
     size_t _max_size;
+    uint64_t _stamp = 0;
 
-    std::map<std::string, std::string> _backend;
+    std::unordered_map<std::string, pair_st_str> _backend;
+
+    std::string FindOldKey();
 };
 
 } // namespace Backend

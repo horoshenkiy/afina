@@ -9,7 +9,8 @@ class Simple;
 
 class Pointer {
 public:
-    Pointer();
+    Pointer() = default;
+    Pointer(void** ptr) : _ptr(ptr) {};
 
     Pointer(const Pointer &);
     Pointer(Pointer &&);
@@ -17,7 +18,10 @@ public:
     Pointer &operator=(const Pointer &);
     Pointer &operator=(Pointer &&);
 
-    void *get() const { return 0; }
+    void *get() const;
+
+private:
+    void** _ptr = nullptr;
 };
 
 } // namespace Allocator
