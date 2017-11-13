@@ -2,6 +2,7 @@
 #include <iostream>
 #include <memory>
 #include <uv.h>
+#include <unistd.h>
 
 #include <cxxopts.hpp>
 
@@ -33,6 +34,25 @@ void timer_handler(uv_timer_t *handle) {
     std::cout << "Start passive metrics collection" << std::endl;
 }
 
+int write_pid(const char *file_name) {
+    int fd_pid = open(file_name, O_CREAT | O_WRONLY, S_IRUSR | S_IWUSR);
+
+    if (fd_pid == -1)
+        return -1;
+
+    char buf_int[32];
+    sprintf(buf_int, "%d %d\n", getppid(), getpid());
+    int len_buf = strlen(buf_int);
+
+    if (write(fd_pid, buf_int, len_buf) != len_buf)
+        return -1;
+
+    if (close(fd_pid) == -1)
+        return -1;
+
+    return 0;
+}
+
 int main(int argc, char **argv) {
     // Build version
     // TODO: move into Version.h as a function
@@ -50,7 +70,34 @@ int main(int argc, char **argv) {
         options.add_options()("s,storage", "Type of storage service to use", cxxopts::value<std::string>());
         options.add_options()("n,network", "Type of network service to use", cxxopts::value<std::string>());
         options.add_options()("h,help", "Print usage info");
+        options.add_options()("d,deamon", "Enable as deamon");
+        options.add_options()("p,pid", "Write PID to file", cxxopts::value<std::string>());
+
         options.parse(argc, argv);
+
+        if (options.count("deamon") > 0) {
+            unsigned pid = fork();
+
+            if (pid == -1) {
+                printf("Error: Start Daemon failed (%s)\n", strerror(errno));
+                return -1;
+            }
+
+            if (!pid) {
+                setsid();
+                close(STDIN_FILENO);
+                close(STDOUT_FILENO);
+                close(STDERR_FILENO);
+          
+		sleep(3);
+	    } else {
+                return 0;
+            }
+        }
+
+        if (options.count("pid") > 0) {
+            write_pid(options["pid"].as<std::string>().c_str());
+        }
 
         if (options.count("help") > 0) {
             std::cerr << options.help() << std::endl;
