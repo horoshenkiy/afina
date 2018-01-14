@@ -18,6 +18,11 @@
 #include <unistd.h>
 
 #include <afina/Storage.h>
+#include <afina/execute/Command.h>
+#include <storage/MapBasedGlobalLockImpl.h>
+#include "protocol/Parser.h"
+
+#define MAX_SIZE_RECV 1024
 
 namespace Afina {
 namespace Network {
@@ -58,29 +63,7 @@ void ServerImpl::Start(uint32_t port, uint16_t n_workers) {
     max_workers = n_workers;
     listen_port = port;
 
-    // The pthread_create function creates a new thread.
-    //
-    // The first parameter is a pointer to a pthread_t variable, which we can use
-    // in the remainder of the program to manage this thread.
-    //
-    // The second parameter is used to specify the attributes of this new thread
-    // (e.g., its stack size). We can leave it NULL here.
-    //
-    // The third parameter is the function this thread will run. This function *must*
-    // have the following prototype:
-    //    void *f(void *args);
-    //
-    // Note how the function expects a single parameter of type void*. We are using it to
-    // pass this pointer in order to proxy call to the class member function. The fourth
-    // parameter to pthread_create is used to specify this parameter value.
-    //
-    // The thread we are creating here is the "server thread", which will be
-    // responsible for listening on port 23300 for incoming connections. This thread,
-    // in turn, will spawn threads to service each incoming connection, allowing
-    // multiple clients to connect simultaneously.
-    // Note that, in this particular example, creating a "server thread" is redundant,
-    // since there will only be one server thread, and the program's main thread (the
-    // one running main()) could fulfill this purpose.
+    // Create a new thread.
     running.store(true);
     if (pthread_create(&accept_thread, NULL, ServerImpl::RunAcceptorProxy, this) < 0) {
         throw std::runtime_error("Could not create server thread");
@@ -90,7 +73,9 @@ void ServerImpl::Start(uint32_t port, uint16_t n_workers) {
 // See Server.h
 void ServerImpl::Stop() {
     std::cout << "network debug: " << __PRETTY_FUNCTION__ << std::endl;
+
     running.store(false);
+    shutdown(server_socket, SHUT_RDWR);
 }
 
 // See Server.h
@@ -123,7 +108,7 @@ void ServerImpl::RunAcceptor() {
     // - Family: IPv4
     // - Type: Full-duplex stream (reliable)
     // - Protocol: TCP
-    int server_socket = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
+    server_socket = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (server_socket == -1) {
         throw std::runtime_error("Failed to open socket");
     }
@@ -165,64 +150,196 @@ void ServerImpl::RunAcceptor() {
 
         // When an incoming connection arrives, accept it. The call to accept() blocks until
         // the incoming connection arrives
-        if ((client_socket = accept(server_socket, (struct sockaddr *)&client_addr, &sinSize)) == -1) {
-            close(server_socket);
-            throw std::runtime_error("Socket accept() failed");
+        if ((client_socket = accept(server_socket, (struct sockaddr *)&client_addr, &sinSize)) == -1)
+            break;
+
+        // Check size of connections
+        if (SizeConnections() == max_workers) {
+            close(client_socket);
+            continue;
         }
 
-        // TODO: Start new thread and process data from/to connection
-        {
-            std::string msg = "TODO: start new thread and process memcached protocol instead";
-            if (send(client_socket, msg.data(), msg.size(), 0) <= 0) {
-                close(client_socket);
-                close(server_socket);
-                throw std::runtime_error("Socket send() failed");
-            }
-            close(client_socket);
+        // Start new thread and process data from/to connection
+        pthread_t connection;
+        ConnectionArgs args = {this, client_socket};
+
+        if (pthread_create(&connection, NULL, ServerImpl::RunConnectionProxy, &args) < 0) {
+            throw std::runtime_error("Could not create server thread");
         }
+
+        AddConnection(connection, client_socket);
     }
+
+    std::unique_lock<std::mutex> __lock(connections_mutex);
+    for (auto p : connections)
+        shutdown(p.second, SHUT_RDWR);
+    __lock.unlock();
 
     // Cleanup on exit...
     close(server_socket);
 
     // Wait until for all connections to be complete
-    std::unique_lock<std::mutex> __lock(connections_mutex);
+    __lock.lock();
     while (!connections.empty()) {
         connections_cv.wait(__lock);
     }
+    __lock.unlock();
+}
+
+//// run connection
+//////////////////////////////////////////////////////////////////////////////////
+
+void* ServerImpl::RunConnectionProxy(void *p) {
+    ConnectionArgs *args = reinterpret_cast<ConnectionArgs*>(p);
+
+    try {
+        args->server->RunConnection(args->socket);
+    } catch (std::runtime_error &ex) {
+        shutdown(args->socket, SHUT_RDWR);
+        close(args->socket);
+        std::cerr << "Server fails: " << ex.what() << std::endl;
+    }
+
+    return 0;
 }
 
 // See Server.h
-void ServerImpl::RunConnection() {
+void ServerImpl::RunConnection(int client_socket) {
     std::cout << "network debug: " << __PRETTY_FUNCTION__ << std::endl;
-    pthread_t self = pthread_self();
-
-    // Thread just spawn, register itself as a connection
-    {
-        std::unique_lock<std::mutex> __lock(connections_mutex);
-        connections.insert(self);
-    }
 
     // TODO: All connection work is here
+    try {
+        ParseAndExecuteCommand(client_socket);
+    } catch (std::exception &ex) {
+        std::string out = std::string("SERVER_ERROR ") + ex.what() + "\r\n";
+        send(client_socket, out.c_str(), out.length(), 0);
+    }
 
+    close(client_socket);
+    printf("Close connection!\n");
+
+    // TODO: create as function
     // Thread is about to stop, remove self from list of connections
     // and it was the very last one, notify main thread
-    {
-        std::unique_lock<std::mutex> __lock(connections_mutex);
-        auto pos = connections.find(self);
+    EraseConnection(pthread_self());
 
-        assert(pos != connections.end());
-        connections.erase(pos);
+    if (connections.empty()) {
+        // We are pretty sure that only ONE thread is waiting for connections
+        // queue to be empty - main thread
+        connections_cv.notify_one();
+        return;
+    }
 
-        if (connections.empty()) {
-            // Better to unlock before notify in order to let notified thread
-            // hold the mutex. Otherwise notification might be skipped
-            __lock.unlock();
+    std::cout << "сдох!!\n";
 
-            // We are pretty sure that only ONE thread is waiting for connections
-            // queue to be empty - main thread
-            connections_cv.notify_one();
+}
+
+//// parse and execute command
+//////////////////////////////////////////////////////////////////////////////////
+
+void ServerImpl::ParseAndExecuteCommand(int client_socket) {
+    Protocol::Parser parser = Protocol::Parser();
+    char *str_recv = new char[MAX_SIZE_RECV], *str_args = nullptr;
+
+    size_t len_recv, parsed = 0, all_parsed;
+    uint32_t len_args = 0, parsed_args = 0;
+
+    std::unique_ptr<Execute::Command> p_command;
+    bool is_create_command = false;
+    std::string out;
+
+    while(true) {
+        if (recv(client_socket, str_recv, MAX_SIZE_RECV, 0) <= 0)
+            break;
+
+        len_recv = strlen(str_recv);
+        if (!len_recv)
+            continue;
+
+        // TODO: refactoring to switch
+        all_parsed = 0;
+        while (all_parsed != len_recv || is_create_command) {
+
+            //// execute command
+            ////////////////////////////////////////////////////////////////
+            if (is_create_command) {
+                printf("execute command");
+
+                if (str_args) {
+                    (*p_command).Execute(*pStorage, std::string(str_args), out);
+                    delete[] str_args;
+                    str_args = nullptr;
+                }
+                else
+                    (*p_command).Execute(*pStorage, std::string(), out);
+
+                if (send(client_socket, (out + "\r\n").c_str(), out.length(), 0) < out.length())
+                    return;
+
+                if (!running.load())
+                    return;
+
+                is_create_command = false;
+                continue;
+            }
+
+            //// drop \n, \r
+            ////////////////////////////////////////////////////////////////
+            if (str_recv[all_parsed] == '\n' || str_recv[all_parsed] == '\r') {
+                all_parsed++;
+                continue;
+            }
+
+            //// parse arguments
+            ////////////////////////////////////////////////////////////////
+            if (len_args) {
+                parsed = parsed_args;
+
+                if (ParseArgs(str_recv + all_parsed, len_args - parsed_args, str_args + parsed_args, parsed_args)) {
+                    all_parsed += parsed_args - parsed;
+                    len_args = 0, parsed_args = 0;
+                    is_create_command = true;
+                    continue;
+                } else
+                    break;
+            }
+
+            //// parse command
+            ////////////////////////////////////////////////////////////////
+            parsed = 0;
+            if (parser.Parse(str_recv + all_parsed, len_recv - all_parsed, parsed)) {
+                all_parsed += parsed;
+
+                p_command = parser.Build(len_args);
+                parser.Reset();
+
+                if (len_args) {
+                    str_args = new char[len_args];
+                    parsed_args = 0;
+                } else {
+                    is_create_command = true;
+                }
+            } else
+                break;
+            ////////////////////////////////////////////////////////////////
         }
+    }
+
+    delete[] str_recv;
+}
+
+bool ServerImpl::ParseArgs(char* str_recv, uint32_t s_args, char *str_args, uint32_t &parsed) {
+    size_t size_recv = strlen(str_recv);
+
+    if (size_recv < s_args) {
+        memcpy(str_args, str_recv, size_recv);
+        parsed += size_recv;
+        return false;
+    }
+    else {
+        memcpy(str_args, str_recv, s_args);
+        parsed += s_args;
+        return true;
     }
 }
 

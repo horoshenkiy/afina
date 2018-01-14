@@ -88,11 +88,9 @@ int main(int argc, char **argv) {
                 close(STDIN_FILENO);
                 close(STDOUT_FILENO);
                 close(STDERR_FILENO);
-          
-		sleep(3);
-	    } else {
+
+	        } else
                 return 0;
-            }
         }
 
         if (options.count("pid") > 0) {
@@ -159,7 +157,7 @@ int main(int argc, char **argv) {
     // Start services
     try {
         app.storage->Start();
-        app.server->Start(8080);
+        app.server->Start(8080, 2);
 
         // Freeze current thread and process events
         std::cout << "Application started" << std::endl;

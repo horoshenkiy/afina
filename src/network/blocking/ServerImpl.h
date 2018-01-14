@@ -5,9 +5,10 @@
 #include <condition_variable>
 #include <mutex>
 #include <pthread.h>
-#include <unordered_set>
 
 #include <afina/network/Server.h>
+#include <unordered_map>
+#include <assert.h>
 
 namespace Afina {
 namespace Network {
@@ -40,10 +41,57 @@ protected:
     /**
      * Methos is running for each connection
      */
-    void RunConnection();
+    void RunConnection(int client_socket);
 
 private:
+
     static void *RunAcceptorProxy(void *p);
+
+    static void *RunConnectionProxy(void *p);
+
+    //// struct for arguments of connection
+    ///////////////////////////////////////////////////////////////////////////////
+
+    struct ConnectionArgs {
+        ServerImpl *server;
+        int socket;
+    };
+
+    //// Methods for miltithreading work woth connections
+    ///////////////////////////////////////////////////////////////////////////////
+
+    void AddConnection(pthread_t pthread, int client_socket) {
+        std::unique_lock<std::mutex> __lock(connections_mutex);
+        connections.insert(std::pair<pthread_t, int>(pthread, client_socket));
+        __lock.unlock();
+    }
+
+    int SizeConnections() {
+        std::unique_lock<std::mutex> __lock(connections_mutex);
+        int size = connections.size();
+        __lock.unlock();
+
+        return size;
+    }
+
+    void EraseConnection(pthread_t pthread) {
+        std::unique_lock<std::mutex> __lock(connections_mutex);
+
+        auto pos = connections.find(pthread);
+        assert(pos != connections.end());
+        connections.erase(pos);
+
+        __lock.unlock();
+    }
+
+    //// Parsing and execute command
+    ///////////////////////////////////////////////////////////////////////////////
+
+    bool ParseArgs(char* str_recv, uint32_t s_args, char *str_args, uint32_t &parsed);
+
+    void ParseAndExecuteCommand(int client_socket);
+
+    ///////////////////////////////////////////////////////////////////////////////
 
     // Atomic flag to notify threads when it is time to stop. Note that
     // flag must be atomic in order to safely publisj changes cross thread
@@ -72,7 +120,9 @@ private:
 
     // Threads that are processing connection data, permits
     // access only from inside of accept_thread
-    std::unordered_set<pthread_t> connections;
+    std::unordered_map<pthread_t, int> connections;
+
+    int server_socket;
 };
 
 } // namespace Blocking
