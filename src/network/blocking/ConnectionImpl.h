@@ -39,9 +39,7 @@ private:
     //// parse and execute command
     //////////////////////////////////////////////////////////////////////////////////
 
-    void ParseAndExecuteCommand(int client_socket);
-
-    bool ParseArgs(char* str_recv, uint32_t s_args, char *str_args, uint32_t &parsed);
+    void ReceiveAndExecute(int client_socket);
 
     //////////////////////////////////////////////////////////////////////////////////
 

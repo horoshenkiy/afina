@@ -1,8 +1,12 @@
 #ifndef AFINA_NETWORK_NONBLOCKING_WORKER_H
 #define AFINA_NETWORK_NONBLOCKING_WORKER_H
 
+#include <atomic>
 #include <memory>
 #include <pthread.h>
+#include <afina/Storage.h>
+#include <network/blocking/ParseRunner.h>
+#include <iostream>
 
 namespace Afina {
 
@@ -17,9 +21,16 @@ namespace NonBlocking {
  * On Start spaws background thread that is doing epoll on the given server
  * socket and process incoming connections and its data
  */
+
 class Worker {
 public:
+
+    Worker() = default;
     Worker(std::shared_ptr<Afina::Storage> ps);
+
+    Worker(const Worker &) = delete;
+    Worker(Worker &&) = delete;
+
     ~Worker();
 
     /**
@@ -47,10 +58,24 @@ protected:
     /**
      * Method executing by background thread
      */
-    void OnRun(void *args);
+    void OnRun();
+
+    static void* OnRunProxy(void *args);
 
 private:
+    ///////////////////////////////////////////////////////////////////////////
+
     pthread_t thread;
+
+    std::atomic<bool> running;
+
+    std::shared_ptr<Afina::Storage> pStorage;
+
+    Afina::Network::Blocking::ParseRunner parseRunner;
+
+    int server_socket, epoll_fd;
+
+
 };
 
 } // namespace NonBlocking

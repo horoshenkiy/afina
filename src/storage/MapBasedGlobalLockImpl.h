@@ -36,10 +36,11 @@ public:
     bool Delete(const std::string &key) override;
 
     // Implements Afina::Storage interface
-    bool Get(const std::string &key, std::string &value) const override;
+    bool Get(const std::string &key, std::string &value) override;
 
 private:
-    std::mutex _lock;
+
+    std::recursive_mutex mutex;
 
     size_t _max_size;
     uint64_t _stamp = 0;
