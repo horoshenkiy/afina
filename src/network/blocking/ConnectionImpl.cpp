@@ -82,7 +82,7 @@ void ConnectionImpl::ReceiveAndExecute(int client_socket) {
         str_recv[len_recv] = '\0';
 
         executor.Load(str_recv, len_recv);
-        while (!executor.IsEmpty()) {
+        while (!executor.IsDone()) {
             try {
                 out = executor.Run();
             } catch (std::exception &ex) {

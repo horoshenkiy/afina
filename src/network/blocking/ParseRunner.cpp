@@ -9,106 +9,97 @@ namespace Afina {
 namespace Network {
 namespace Blocking {
 
-bool ParseArgs(char* str_recv, uint32_t s_args, char *str_args, uint32_t &parsed);
+void ParseRunner::Reset() {
+    parser.Reset();
 
+    if (len_args)
+        delete[] args;
 
-//// Implementation
-////////////////////////////////////////////////////////////////////////////////
+    len_args = 0;
+}
 
-bool ParseRunner::IsEmpty() { return is_empty; }
+bool ParseRunner::IsDone() { return is_done; }
+
+ssize_t ParseRunner::GetParsed() { return all_parsed; }
 
 void ParseRunner::Load(char *recv, ssize_t len_recv) {
     this->recv = recv;
     this->len_recv = len_recv;
 
-    all_parsed = 0, is_empty = false;
+    all_parsed = 0, is_done = false;
 }
 
 std::string ParseRunner::Run() {
-    bool is_create_command = false;
+
     std::string out;
+    size_t parsed;
+    bool is_exit = false;
 
-    while (all_parsed != len_recv || is_create_command) {
+    while (!is_exit) {
 
-        //// execute command
-        ////////////////////////////////////////////////////////////////
-        if (is_create_command) {
-            if (args) {
-                (*p_command).Execute(*pStorage, std::string(args), out);
-                delete[] args;
-                args = nullptr;
-            }
-            else
-                (*p_command).Execute(*pStorage, std::string(), out);
-
-            len_args = 0;
-
-            out += "\r\n";
-            return out;
-        }
-
-        //// drop \n, \r
-        ////////////////////////////////////////////////////////////////
-        if (recv[all_parsed] == '\n' || recv[all_parsed] == '\r') {
+        // drop \n, \r
+        if (all_parsed != len_recv && (recv[all_parsed] == '\n' || recv[all_parsed] == '\r')) {
             all_parsed++;
             continue;
         }
 
-        //// parse arguments
-        ////////////////////////////////////////////////////////////////
-        if (len_args) {
-            // need for few package of arguments
-            prev_parsed_args = parsed_args;
+        // parse and execute
+        switch (state) {
+            // parse command
+            case State::sParseComm:
+                parsed = 0;
+                if (parser.Parse(recv + all_parsed, len_recv - all_parsed, parsed)) {
+                    p_command = parser.Build(len_args);
+                    parser.Reset();
 
-            if (ParseArgs(recv + all_parsed, len_args - parsed_args, args + parsed_args, parsed_args)) {
-                all_parsed += parsed_args - prev_parsed_args;
-                len_args = 0, parsed_args = 0;
-                is_create_command = true;
-                continue;
-            } else
+                    if (len_args) {
+                        args = new char[len_args];
+                        state = State::sParseArgs;
+                    } else
+                        state = State::sComm;
+
+                } else
+                    is_exit = true;
+
+                all_parsed += parsed;
                 break;
+
+            // parse arguments
+            case State::sParseArgs:
+                prev_parsed_args = parsed_args;
+
+                if (ParseArgs(recv + all_parsed, len_args - parsed_args, args + parsed_args, parsed_args)) {
+                    all_parsed += parsed_args - prev_parsed_args;
+                    parsed_args = 0;
+                    state = State::sComm;
+                } else
+                    is_exit = true;
+
+                break;
+
+            // execute command
+            case State::sComm:
+                std::string strArgs = (len_args) ? std::string(args, len_args) : std::string();
+                Reset();
+
+                p_command.get()->Execute(*pStorage, strArgs, out);
+                state = State::sParseComm;
+
+                return out + "\r\n";
         }
-
-        //// parse command
-        ////////////////////////////////////////////////////////////////
-        size_t parsed = 0;
-        if (parser.Parse(recv + all_parsed, len_recv - all_parsed, parsed)) {
-            all_parsed += parsed;
-
-            p_command = parser.Build(len_args);
-            parser.Reset();
-
-            if (len_args) {
-                args = new char[len_args + 1];
-                args[len_args] = '\0';
-                parsed_args = 0;
-            } else {
-                is_create_command = true;
-            }
-        } else {
-            all_parsed += parsed;
-            break;
-        }
-        ////////////////////////////////////////////////////////////////
     }
 
-    is_empty = true;
+    is_done = true;
     return "";
 }
 
-bool ParseArgs(char* str_recv, uint32_t s_args, char *str_args, uint32_t &parsed) {
-    size_t size_recv = strlen(str_recv);
+inline bool ParseRunner::ParseArgs(char* str_recv, uint32_t s_args, char *str_args, uint32_t &parsed) {
+    ssize_t size_recv = (len_recv - all_parsed < s_args) ? len_recv - all_parsed : s_args;
 
-    if (size_recv < s_args) {
-        memcpy(str_args, str_recv, size_recv);
-        parsed += size_recv;
-        return false;
-    }
-    else {
-        memcpy(str_args, str_recv, s_args);
-        parsed += s_args;
-        return true;
-    }
+    memcpy(str_args, str_recv, size_recv);
+    parsed += size_recv;
+
+    return size_recv == s_args;
 }
 
 }

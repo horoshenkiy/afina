@@ -7,6 +7,12 @@
 #include <afina/Storage.h>
 #include <network/blocking/ParseRunner.h>
 #include <iostream>
+#include <unordered_map>
+#include <unordered_set>
+#include <network/blocking/ConnectionImpl.h>
+#include <queue>
+
+#define MAXSIZERECV 1024
 
 namespace Afina {
 
@@ -63,18 +69,42 @@ protected:
     static void* OnRunProxy(void *args);
 
 private:
-    ///////////////////////////////////////////////////////////////////////////
 
+    // data of worker
     pthread_t thread;
 
-    std::atomic<bool> running;
+    std::atomic<bool> running = {false};
 
     std::shared_ptr<Afina::Storage> pStorage;
 
-    Afina::Network::Blocking::ParseRunner parseRunner;
+    // data for connection
+    struct Connection {
+        int client_socket;
+        char buf[MAXSIZERECV];
+        size_t curr_begin = 0;
 
+        // list of messages
+        std::queue<std::string> qMessages;
+
+        // parser
+        Afina::Network::Blocking::ParseRunner *parseRunner;
+
+        // constructors
+        Connection() = default;
+        Connection(int client_socket, std::shared_ptr<Afina::Storage> storage);
+
+        // destructors
+        ~Connection();
+
+        // methods
+        bool TrySend(std::string &message);
+        bool AllSend();
+    };
+
+    std::unordered_map<int, Connection*> connections;
+
+    // sockets
     int server_socket, epoll_fd;
-
 
 };
 

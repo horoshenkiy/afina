@@ -50,7 +50,7 @@ void ServerImpl::Start(uint32_t port, uint16_t n_workers) {
     server_addr.sin_port = htons(port);       // TCP port number
     server_addr.sin_addr.s_addr = INADDR_ANY; // Bind to any address
 
-    int server_socket = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
+    server_socket = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (server_socket == -1) {
         throw std::runtime_error("Failed to open socket");
     }
@@ -84,6 +84,8 @@ void ServerImpl::Stop() {
     for (auto &worker : workers) {
         worker->Stop();
     }
+
+    shutdown(server_socket, SHUT_RD);
 }
 
 // See Server.h

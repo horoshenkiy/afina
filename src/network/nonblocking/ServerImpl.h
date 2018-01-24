@@ -38,6 +38,8 @@ private:
 
     // Thread that is accepting new connections
     std::vector<Worker*> workers;
+
+    int server_socket;
 };
 
 } // namespace NonBlocking

@@ -20,21 +20,31 @@ class ParseRunner {
 
 public:
 
+    // constructors
     ParseRunner() = default;
-
     ParseRunner(std::shared_ptr<Afina::Storage> ps) : pStorage(ps) {}
 
+    ParseRunner(const ParseRunner &other) = default;
+    ParseRunner(ParseRunner &&other) = default;
+
+    ParseRunner& operator=(const ParseRunner& other) = default;
+
+    // API
     void Load(char *recv, ssize_t len_recv);
 
     std::string Run();
 
-    bool IsEmpty();
+    void Reset();
 
-    void Reset() {
-        parser.Reset();
-    }
+    // Check status
+    bool IsDone();
+
+    ssize_t GetParsed();
 
 private:
+
+    // Help methods
+    bool ParseArgs(char* str_recv, uint32_t s_args, char *str_args, uint32_t &parsed);
 
     //// storage
     std::shared_ptr<Afina::Storage> pStorage;
@@ -45,17 +55,21 @@ private:
 
     //// state of parsing
     ///////////////////////////////////////////////////////////
-    bool is_empty = true;
+    bool is_done = true;
 
     ssize_t all_parsed;
 
     // command
     Protocol::Parser parser = Protocol::Parser();
-    std::unique_ptr<Execute::Command> p_command;
+    std::shared_ptr<Execute::Command> p_command;
 
     // arguments
     char *args = nullptr;
     uint32_t len_args = 0, prev_parsed_args, parsed_args;
+
+    // State of ParseRunner
+    enum State : int {sParseComm, sParseArgs, sComm};
+    State state = State::sParseComm;
 
 };
 
