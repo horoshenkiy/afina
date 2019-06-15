@@ -54,6 +54,7 @@ std::string ParseRunner::Run() {
 
                     if (len_args) {
                         args = new char[len_args];
+                        parsed_args = 0;
                         state = State::sParseArgs;
                     } else
                         state = State::sComm;

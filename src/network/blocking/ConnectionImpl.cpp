@@ -79,15 +79,13 @@ void ConnectionImpl::ReceiveAndExecute(int client_socket) {
         if ((len_recv = recv(client_socket, str_recv, MAX_SIZE_RECV, 0)) <= 0)
             break;
 
-        str_recv[len_recv] = '\0';
-
         executor.Load(str_recv, len_recv);
         while (!executor.IsDone()) {
             try {
                 out = executor.Run();
             } catch (std::exception &ex) {
                 delete[] str_recv;
-                out = std::string("SERVER_ERROR ") + ex.what() + "\r\n";
+                out = std::string("CLIENT_ERROR ") + ex.what() + "\r\n";
                 send(client_socket, out.c_str(), out.length(), 0);
                 return;
             }

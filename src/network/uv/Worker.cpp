@@ -201,8 +201,8 @@ void Worker::OnConnectionClosed(uv_handle_t *h) {
     assert(pconn->runningTasks == 0);
 
     if (alive.erase(pconn) != 0) {
-        delete pconn;
     }
+            delete pconn;
 
     // After all connections are closed, we could really close worker
     CloseEventLoppIfPossible();
@@ -258,6 +258,7 @@ void Worker::OnConnectionOpen(uv_stream_t *server, int status) {
 // We are always allocate memorythere until all incoming data fits, parse it and deallocate buffer just after that.
 // See Worker.h
 void Worker::OnAllocate(uv_handle_t *conn, size_t suggested_size, uv_buf_t *buf) {
+    std::cout << "network debug:" << __PRETTY_FUNCTION__ << std::endl;
     assert(conn);
 
     Connection *pconn = (Connection *)(conn);
@@ -295,12 +296,17 @@ void Worker::OnRead(uv_stream_t *conn, ssize_t nread, const uv_buf_t *buf) {
     try {
         pconn->input_used += nread;
         while (pconn->input_parsed < pconn->input_used) {
+
             // Read header or body if needs
             if (pconn->state == ConnectionState::sRecvHeader) {
+
                 // Try to parse command out
-                if (!pconn->parser.Parse(pconn->input, pconn->input_used, pconn->input_parsed)) {
+                if (!pconn->parser.Parse(
+                        pconn->input + pconn->input_parsed,
+                        pconn->input_used - pconn->input_parsed,
+                        pconn->input_parsed
+                ))
                     continue;
-                }
 
                 // Command has been parsed form input
                 pconn->cmd = pconn->parser.Build(pconn->body_size);
@@ -431,10 +437,13 @@ void Worker::OnExecutionDone(uv_async_t *handle) {
 
     // Send buffer to socket. Even if connection is already closed we are still try to write data out,
     // that would lead to possible write error which is ok and will be handled in the OnWriteDone
+    task->connection->runningTasks--;
     int rc = uv_write(&task->handler, &task->connection->handler, &task->result, 1,
                       delegate<Worker, int>::callback<&Worker::OnWriteDone>);
+
     if (rc != 0) {
-        throw std::runtime_error("Failed to write request");
+        delete[] task->result.base;
+        delete task;
     }
 }
 
@@ -445,7 +454,6 @@ void Worker::OnWriteDone(uv_write_t *req, int status) {
     ExecuteTask *task = (ExecuteTask *)req;
     Connection *pconn = task->connection;
 
-    task->connection->runningTasks--;
     if (task->connection->state == ConnectionState::sClosed && task->connection->runningTasks == 0) {
         uv_close((uv_handle_t *)(task->connection), delegate<Worker>::callback<&Worker::OnConnectionClosed>);
     }

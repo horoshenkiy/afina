@@ -192,7 +192,7 @@ void Worker::OnRun() {
                         } catch (std::exception &ex) {
                             parseRunner->Reset();
 
-                            out = std::string("SERVER_ERROR ") + ex.what() + "\r\n";
+                            out = std::string("CLIENT_ERROR ") + ex.what() + "\r\n";
                             connection->TrySend(out);
 
                             done = true, receive = false;
